@@ -1,27 +1,29 @@
-name: 'Gemini AI PR Reviewer'
-description: 'Full-cycle AI code review including checkout'
-author: 'Val-d-emar'
+name: "Gemini AI PR Reviewer"
+description: "Full-cycle AI code review including checkout"
+author: "Val-d-emar"
 
 inputs:
   gemini_api_key:
-    description: 'API Key from Google AI Studio (Simple AI or Vertex AI)'
+    description: "API Key from Google AI Studio OR Service Account JSON for Vertex AI"
     required: true
   use_vertexapi_key:
-    description: 'Using API VERTEX AI Key from Google AI Studio'
+    description: "Set to true if using Vertex AI (GCP Service Account JSON)"
     required: false
-    default: 'false'    
+    default: "false"
   github_token:
-    description: 'GitHub PAT for the reviewer account (needs repo scope)'
+    description: "GitHub PAT for the reviewer account (needs repo scope)"
     required: false
-    default: ${{ secrets.GITHUB_TOKEN }}
+    default: ${{ github.token }}
   review_prompt:
-    description: 'Custom prompt for the AI'
+    description: "Custom prompt for the AI"
     required: false
-    default: "You are an expert software engineer. Review this git diff for bugs, security, and style. Provide feedback in Markdown. If okay, say LGTM!."
+    default: "You are an expert software engineer. Review this git diff for bugs,
+      security, and style. Provide feedback in Markdown. If okay,
+      approve PR including the text 'RESUME: APPROVE' to end of your response."
   approval_required:
-    description: 'Require approval from the reviewer'
+    description: "Require approval from the reviewer (uses --approve or --request-changes)"
     required: false
-    default: 'false'
+    default: "false"
 
 runs:
   using: "composite"
@@ -38,12 +40,12 @@ runs:
       if: ${{ inputs.use_vertexapi_key == 'true' }}
       uses: google-github-actions/auth@v2
       with:
-        credentials_json: '${{ gemini_api_key }}'
+        credentials_json: "${{ inputs.gemini_api_key }}"
 
     - name: Setup Node.js
       uses: actions/setup-node@v6
       with:
-        node-version: '24'
+        node-version: "24"
 
     - name: Install Gemini CLI
       run: npm install -g @google/gemini-cli
@@ -55,42 +57,38 @@ runs:
       shell: bash
 
     - name: Run Gemini Review
-      env:        
-        GOOGLE_GENAI_USE_VERTEXAI: ${{ inputs.gemini_usevertexapi_key }}
+      env:
+        GOOGLE_GENAI_USE_VERTEXAI: ${{ inputs.use_vertexapi_key }}
+        GEMINI_API_KEY: ${{ inputs.use_vertexapi_key == 'false' && inputs.gemini_api_key
+          || '' }}
       run: |
-        if [ inputs.gemini_usevertexapi_key == 'false' ] ; then
-          GEMINI_API_KEY=${{ inputs.gemini_api_key }}
-        fi
         gemini prompt "${{ inputs.review_prompt }}" pr_diff.txt > review_result.md
-        RESUME=$(grep -i "RESUME: APROVE" review_result.md | wc -l)
+
         if [ "${{ inputs.approval_required }}" == "true" ]; then
-          if [ "$RESUME" == "APROVE" ]; then
-            echo "APROVE" >> review_status.txt
+          if grep -iq "RESUME: APPROVE" review_result.md; then
+            echo "APPROVE" > review_status.txt
           else
-            echo "REJECT" >> review_status.txt
+            echo "REJECT" > review_status.txt
           fi
         fi
-
       shell: bash
 
     - name: Submit PR Review
       env:
-        GITHUB_TOKEN: ${{ inputs.inputs.github_token }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
       run: |
-        if [ "${{ inputs.approval_required }}" == "true" ]; then
+        if[ "${{ inputs.approval_required }}" == "true" ]; then
           RESUME=$(cat review_status.txt)
-          if [ "$RESUME" == "APROVE" ] ; then
+          if [ "$RESUME" == "APPROVE" ]; then
             gh pr review ${{ github.event.pull_request.number }} \
               -R ${{ github.repository }} \
-              --comment \
-              --body-file review_result.md \
-              --approv
+              --approve \
+              --body-file review_result.md
           else
             gh pr review ${{ github.event.pull_request.number }} \
               -R ${{ github.repository }} \
-              --comment \
-              --body-file review_result.md \
-              --request-changes
+              --request-changes \
+              --body-file review_result.md
           fi
         else
           gh pr review ${{ github.event.pull_request.number }} \
@@ -98,5 +96,4 @@ runs:
             --comment \
             --body-file review_result.md
         fi
-
       shell: bash
