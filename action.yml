@@ -79,9 +79,13 @@ runs:
       env:
         GOOGLE_GENAI_USE_VERTEXAI: ${{ inputs.use_vertexapi_key }}
         GEMINI_API_KEY: ${{ inputs.use_vertexapi_key == 'false' && inputs.gemini_api_key || '' }}
+        USER_PROMPT: ${{ inputs.review_prompt }}
+        USER_LANG: ${{ inputs.review_language }}
       run: |
-        gemini prompt "Use ${{ inputs.review_language }} language for answer. ${{ inputs.review_prompt }}" pr_diff.txt > raw_review.md
-
+        FULL_PROMPT="Use ${USER_LANG} language for answer. ${USER_PROMPT}"
+        
+        gemini prompt "$FULL_PROMPT" pr_diff.txt > raw_review.md
+        
         printf "%s\n\n" "${{ inputs.comment_title }}" > review_result.md
         cat raw_review.md >> review_result.md
 
