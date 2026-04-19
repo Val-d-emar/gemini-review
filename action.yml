@@ -21,7 +21,8 @@ inputs:
   review_prompt:
     description: "Custom prompt for the AI"
     required: false
-    default: "You are an expert software engineer. Review this git diff for bugs,
+    default:
+      "You are an expert software engineer. Review this git diff for bugs,
       security, and style. Provide feedback in Markdown. If okay, approve PR
       including the text 'RESUME: APPROVE' to end of your response."
   review_language:
@@ -33,21 +34,23 @@ inputs:
     required: false
     default: "false"
   comment_mode:
-    description: "For reviews (approval_required: true), 'replace' will delete old
-      reviews. For simple comments, it always tries to edit."
+    description:
+      "For simple comments (approval_required: false), it always tries to
+      edit the existing one."
     required: false
     default: "new"
   comment_title:
-    description: "A unique title to prepend to the review, used to find old comments
+    description:
+      "A unique title to prepend to the review, used to find old comments
       for editing."
     required: false
-    default: "# 🤖 AI REVIEW"
+    default: "# 🤖 AI Review"
 
 runs:
   using: "composite"
   steps:
     - name: Checkout Code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         fetch-depth: 0
         token: ${{ inputs.github_token }}
@@ -59,7 +62,7 @@ runs:
         credentials_json: "${{ inputs.gemini_api_key }}"
 
     - name: Setup Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v6
       with:
         node-version: "24"
 
@@ -75,11 +78,12 @@ runs:
     - name: Run Gemini Review
       env:
         GOOGLE_GENAI_USE_VERTEXAI: ${{ inputs.use_vertexapi_key }}
-        GEMINI_API_KEY: ${{ inputs.use_vertexapi_key == 'false' && inputs.gemini_api_key
-          || '' }}
+        GEMINI_API_KEY: ${{ inputs.use_vertexapi_key == 'false' && inputs.gemini_api_key || '' }}
       run: |
         gemini prompt "Use ${{ inputs.review_language }} language for answer. ${{ inputs.review_prompt }}" pr_diff.txt > raw_review.md
-        echo -e "${{ inputs.comment_title }}\n\n$(cat raw_review.md)" > review_result.md
+
+        printf "%s\n\n" "${{ inputs.comment_title }}" > review_result.md
+        cat raw_review.md >> review_result.md
 
         if [ "${{ inputs.approval_required }}" == "true" ]; then
           if grep -iq "RESUME: APPROVE" review_result.md; then
@@ -100,37 +104,27 @@ runs:
 
         # --- ВЕТКА 1: Требуется официальное ревью (Approve/Reject) ---
         if [ "${{ inputs.approval_required }}" == "true" ]; then
-          # Если включен режим 'replace', удаляем старые РЕВЬЮ
-          if [ "${{ inputs.comment_mode }}" == "replace" ]; then
-            REVIEW_IDS=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews -q ".[] | select(.user.login == \"$CURRENT_USER\") | .id")
-            for ID in $REVIEW_IDS; do
-              echo "Deleting old review ID: $ID"
-              gh api -X DELETE repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews/$ID --silent
-            done
-          fi
-          
-          # Публикуем новое РЕВЬЮ
+          # Мы не удаляем старые ревью (DELETE запрещен API), просто постим новое
           RESUME=$(cat review_status.txt)
           if [ "$RESUME" == "APPROVE" ]; then
-            gh pr review --approve --body-file review_result.md
+            gh pr review ${{ github.event.pull_request.number }} -R ${{ github.repository }} --approve --body-file review_result.md
           else
-            gh pr review --request-changes --body-file review_result.md
+            gh pr review ${{ github.event.pull_request.number }} -R ${{ github.repository }} --request-changes --body-file review_result.md
           fi
 
-        # --- ВЕТКА 2: Требуется только комментарий (без статуса) ---
+        # --- ВЕТКА 2: Простой комментарий (с поддержкой редактирования) ---
         else
-          # Ищем ID существующего КОММЕНТАРИЯ от нашего бота по заголовку
-          COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments -q ".[] | select(.user.login == \"$CURRENT_USER\" and (.body | startswith(\"${{ inputs.comment_title }}\"))) | .id" | tail -1)
+          # Ищем ID старого комментария с учетом пагинации (до 1000 комментов)
+          COMMENT_ID=$(gh api --paginate repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments -q ".[] | select(.user.login == \"$CURRENT_USER\" and (.body | startswith(\"${{ inputs.comment_title }}\"))) | .id" | tail -1)
           
-          # Если нашли - редактируем его, иначе - создаем новый
           if [ -n "$COMMENT_ID" ]; then
-            echo "Found existing comment ID: $COMMENT_ID. Editing..."
+            echo "Editing existing comment ID: $COMMENT_ID"
             gh api \
               --method PATCH \
               /repos/${{ github.repository }}/issues/comments/$COMMENT_ID \
               -F body=@review_result.md
           else
-            echo "No existing comment found. Creating a new one..."
-            gh pr comment ${{ github.event.pull_request.number }} --body-file review_result.md
+            echo "Creating new comment..."
+            gh pr comment ${{ github.event.pull_request.number }} -R ${{ github.repository }} --body-file review_result.md
           fi
         fi
