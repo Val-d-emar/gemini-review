@@ -20,5 +20,5 @@ jobs:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           github_token: ${{ secrets.AI_AGENT_PAT }}
           review_language: "Russian"
-          approval_required: "true"
+          approval_required: "false"
           comment_title: "Gemini AI Code Review"
