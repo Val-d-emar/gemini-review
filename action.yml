@@ -38,7 +38,7 @@ inputs:
       "A unique title to prepend to the review, used to find old comments
       for editing."
     required: false
-    default: "# 🤖 AI Review"
+    default: "# 🤖 Gemini AI Code Review"
 
 runs:
   using: "composite"
