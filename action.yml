@@ -14,6 +14,10 @@ inputs:
     description: "Set to true if using Vertex AI (GCP Service Account JSON)"
     required: false
     default: "false"
+  agent_model:
+    description: "Gemini model to use (e.g. 'gemini-1.5-pro', 'flash', 'pro')"
+    required: false
+    default: "flash"
   github_token:
     description: "GitHub PAT for the reviewer account (needs repo scope)"
     required: false
@@ -67,20 +71,43 @@ runs:
       shell: bash
 
     - name: Generate PR Diff
+      id: diff
       run: |
-        git diff origin/${{ github.event.pull_request.base.ref }}...origin/${{ github.event.pull_request.head.ref }} > pr_diff.txt
+        if [ -z "${{ github.event.pull_request.number }}" ]; then
+          echo "Error: This action only works on pull_request events."
+          exit 1
+        fi
+
+        # Используем SHAs для надежности, особенно при работе с форками
+        BASE_SHA="${{ github.event.pull_request.base.sha }}"
+        HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+        git diff $BASE_SHA...$HEAD_SHA > pr_diff.txt
+
+        # Проверяем, не пустой ли дифф, чтобы не дергать API зря
+        if [ ! -s pr_diff.txt ]; then
+          echo "No changes detected in this PR."
+          echo "skip=true" >> $GITHUB_OUTPUT
+        else
+          echo "skip=false" >> $GITHUB_OUTPUT
+        fi
       shell: bash
 
     - name: Run Gemini Review
+      if: steps.diff.outputs.skip == 'false'
       env:
         GOOGLE_GENAI_USE_VERTEXAI: ${{ inputs.use_vertexapi_key }}
-        GEMINI_API_KEY: ${{ inputs.use_vertexapi_key == 'false' && inputs.gemini_api_key || '' }}
+        # Устанавливаем оба ключа для совместимости с разными методами авторизации CLI
+        GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
+        GOOGLE_API_KEY: ${{ inputs.gemini_api_key }}
         USER_PROMPT: ${{ inputs.review_prompt }}
         USER_LANG: ${{ inputs.review_language }}
+        MODEL: ${{ inputs.agent_model }}
       run: |
-        FULL_PROMPT="Use ${USER_LANG} language for answer. ${USER_PROMPT}"
+        FULL_PROMPT="Use ${USER_LANG} language for answer. ${USER_PROMPT} Review changes in @pr_diff.txt"
 
-        gemini prompt "$FULL_PROMPT" pr_diff.txt > raw_review.md
+        # Используем headless mode (-p) и указываем модель
+        gemini -p "$FULL_PROMPT" --model "$MODEL" > raw_review.md
 
         printf "%s\n\n" "${{ inputs.comment_title }}" > review_result.md
         cat raw_review.md >> review_result.md
@@ -95,18 +122,20 @@ runs:
       shell: bash
 
     - name: Submit Feedback to PR
+      if: steps.diff.outputs.skip == 'false'
       env:
         GITHUB_TOKEN: ${{ inputs.github_token }}
       shell: bash
       run: |
         # Определяем логин текущего пользователя (PAT или встроенный бот)
         CURRENT_USER=$(gh api user -q .login 2>/dev/null || echo "github-actions[bot]")
+        # Если gh api вернул ошибку в формате JSON, сбрасываем на бота
         if [[ "$CURRENT_USER" == *"{"* ]]; then CURRENT_USER="github-actions[bot]"; fi
 
         # --- ВЕТКА 1: Требуется официальное ревью (Approve/Reject) ---
         if [ "${{ inputs.approval_required }}" == "true" ]; then
-        # Мы не удаляем старые ревью (DELETE запрещен API), просто постим новое
-        RESUME=$(cat review_status.txt 2>/dev/null || echo "REJECT")
+          # Мы не удаляем старые ревью (DELETE запрещен API), просто постим новое
+          RESUME=$(cat review_status.txt 2>/dev/null || echo "REJECT")
           if [ "$RESUME" == "APPROVE" ]; then
             gh pr review ${{ github.event.pull_request.number }} -R ${{ github.repository }} --approve --body-file review_result.md
           else
