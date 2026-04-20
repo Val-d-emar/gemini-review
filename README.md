@@ -10,8 +10,6 @@
 
 An automated AI-powered Code Reviewer for your GitHub Pull Requests using Google's Gemini Models via the official `gemini-cli`. This action works out of the box with both **Google AI Studio** (free tier API Keys) and **Google Cloud Vertex AI** (Enterprise Service Accounts).
 
-_(Русская версия ниже ⬇️)_
-
 ## Features
 
 - **Plug-and-play**: Automatically handles repository checkout and Node.js setup.
