@@ -96,6 +96,7 @@ runs:
     - name: Run Gemini Review
       if: steps.diff.outputs.skip == 'false'
       env:
+        GEMINI_CLI_TRUST_WORKSPACE: true
         GOOGLE_GENAI_USE_VERTEXAI: ${{ inputs.use_vertexapi_key }}
         # Устанавливаем оба ключа для совместимости с разными методами авторизации CLI
         GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
